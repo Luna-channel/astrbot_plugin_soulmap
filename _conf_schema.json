@@ -48,9 +48,8 @@
     },
     "debug_log_level": {
         "description": "日志级别",
-        "type": "select",
+        "type": "string",
         "default": "INFO",
-        "options": ["DEBUG", "INFO"],
-        "hint": "DEBUG会输出详细调试信息，INFO只输出关键信息"
+        "hint": "可选：DEBUG（详细调试信息）或 INFO（只输出关键信息）"
     }
 }
