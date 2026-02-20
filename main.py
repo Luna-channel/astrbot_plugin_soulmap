@@ -90,17 +90,33 @@ class SoulMapManager:
         return True, f"已更新 {field}"
 
     def delete_field(self, user_id: str, field: str, session_id: Optional[str] = None) -> tuple:
+        """删除字段或备注条目（模糊匹配）"""
         key = self._get_user_key(user_id, session_id)
         if key not in self.user_data:
             return False, "没有找到你的画像数据"
 
-        if field not in self.user_data[key]:
-            return False, f"字段 '{field}' 不存在"
+        # 1. 精确匹配字段名
+        if field in self.user_data[key]:
+            del self.user_data[key][field]
+            self.user_data[key]["_last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self._save_data()
+            return True, f"已删除字段 {field}"
 
-        del self.user_data[key][field]
-        self.user_data[key]["_last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self._save_data()
-        return True, f"已删除 {field}"
+        # 2. 模糊匹配：在备注中搜索并删除包含该内容的条目
+        if "备注" in self.user_data[key]:
+            notes = [n.strip() for n in re.split(r'[；;]', self.user_data[key]["备注"]) if n.strip()]
+            # 找到包含该内容的条目并删除
+            new_notes = [n for n in notes if field not in n]
+            if len(new_notes) < len(notes):
+                if new_notes:
+                    self.user_data[key]["备注"] = "；".join(new_notes)
+                else:
+                    del self.user_data[key]["备注"]
+                self.user_data[key]["_last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                self._save_data()
+                return True, f"已从备注中删除包含 '{field}' 的条目"
+
+        return False, f"未找到字段或备注条目 '{field}'"
 
     def clear_profile(self, user_id: str, session_id: Optional[str] = None) -> bool:
         key = self._get_user_key(user_id, session_id)
@@ -119,7 +135,13 @@ class SoulMapManager:
         lines = []
         for field in self.allowed_fields:
             if field in profile and profile[field]:
-                lines.append(f"- {field}：{profile[field]}")
+                # 备注字段按条显示
+                if field == "备注":
+                    notes = [n.strip() for n in re.split(r'[；;]', profile[field]) if n.strip()]
+                    for i, note in enumerate(notes, 1):
+                        lines.append(f"- 备注{i}：{note}")
+                else:
+                    lines.append(f"- {field}：{profile[field]}")
 
         return "\n".join(lines) if lines else "暂无记录"
 
