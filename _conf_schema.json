@@ -1,9 +1,9 @@
 {
     "session_based": {
-        "description": "用户画像跨窗口共通",
+        "description": "用户画像按窗口独立",
         "type": "bool",
         "default": false,
-        "hint": "关闭时，同一用户在不同群聊/私聊的画像数据相互独立；开启后全窗口共用同一份画像。"
+        "hint": "关闭时（默认），同一用户跨群共用同一份画像；开启后每个群聊/私聊的画像数据相互独立。"
     },
     "allowed_fields": {
         "description": "允许记录的画像字段",

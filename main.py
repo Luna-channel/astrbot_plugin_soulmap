@@ -191,32 +191,13 @@ class SoulMapPlugin(Star):
         context.send_message = patched_send_message
         logger.info("[SoulMap] 已安装全局拦截器")
 
+        # 注意：不在 patched_text_chat 中清理标签！
+        # 因为 patched_text_chat 在 on_llm_response 钩子之前执行
+        # 如果在这里清理，钩子就解析不到 [Profile:] 内容了
+        # 清理工作统一由 on_llm_response 和 on_decorating_result 完成
         def wrap_provider_text_chat(provider):
             if hasattr(provider, '_soulmap_wrapped'):
                 return
-
-            original_text_chat = provider.text_chat
-
-            async def patched_text_chat(*args, **kwargs):
-                llm_resp = await original_text_chat(*args, **kwargs)
-                try:
-                    if llm_resp:
-                        if llm_resp.completion_text:
-                            cleaned = plugin_self.block_pattern.sub('', llm_resp.completion_text).strip()
-                            if cleaned != llm_resp.completion_text:
-                                llm_resp.completion_text = cleaned
-
-                        if llm_resp.result_chain and llm_resp.result_chain.chain:
-                            for comp in llm_resp.result_chain.chain:
-                                if isinstance(comp, Plain) and comp.text:
-                                    cleaned = plugin_self.block_pattern.sub('', comp.text).strip()
-                                    if cleaned != comp.text:
-                                        comp.text = cleaned
-                except Exception as e:
-                    logger.warning(f"[SoulMap] text_chat 拦截器异常: {e}")
-                return llm_resp
-
-            provider.text_chat = patched_text_chat
             provider._soulmap_wrapped = True
 
         try:
@@ -266,25 +247,38 @@ class SoulMapPlugin(Star):
         session_id = self._get_session_id(event)
         original_text = resp.completion_text or ""
 
+        logger.debug(f"[SoulMap] on_llm_resp 被调用 - 用户: {user_id}, session_id: {session_id}, session_based: {self.session_based}")
+        logger.debug(f"[SoulMap] 原始文本长度: {len(original_text)}")
+
         if not original_text:
+            logger.debug("[SoulMap] 原始文本为空，直接返回")
             return
 
         # 处理更新
-        for match in self.profile_pattern.findall(original_text):
+        profile_matches = self.profile_pattern.findall(original_text)
+        logger.debug(f"[SoulMap] 匹配到的 Profile 块数量: {len(profile_matches)}")
+        
+        for match in profile_matches:
+            logger.debug(f"[SoulMap] 解析 Profile 块: {match[:100]}...")
             pairs = re.findall(r'([\w\u4e00-\u9fff]+)\s*=\s*([^,\]]+)', match)
+            logger.debug(f"[SoulMap] 解析到的字段对: {pairs}")
             for field, value in pairs:
-                field = field.strip().lower()
+                field = field.strip()
                 value = value.strip()
-                success, _ = self.manager.update_field(user_id, field, value, session_id)
+                success, msg = self.manager.update_field(user_id, field, value, session_id)
                 if success:
-                    logger.info(f"[SoulMap] {user_id} 更新: {field}={value}")
+                    logger.info(f"[SoulMap] {user_id} 更新成功: {field}={value}")
+                else:
+                    logger.warning(f"[SoulMap] {user_id} 更新失败: {field}={value}, 原因: {msg}")
 
         # 处理删除
         for field in self.delete_pattern.findall(original_text):
-            field = field.strip().lower()
-            success, _ = self.manager.delete_field(user_id, field, session_id)
+            field = field.strip()
+            success, msg = self.manager.delete_field(user_id, field, session_id)
             if success:
-                logger.info(f"[SoulMap] {user_id} 删除: {field}")
+                logger.info(f"[SoulMap] {user_id} 删除成功: {field}")
+            else:
+                logger.warning(f"[SoulMap] {user_id} 删除失败: {field}, 原因: {msg}")
 
         # 清理标签
         resp.completion_text = self.block_pattern.sub('', original_text).strip()
