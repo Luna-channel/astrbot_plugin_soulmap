@@ -43,7 +43,7 @@
     "profile_prompt": {
         "description": "画像系统提示词",
         "type": "text",
-        "default": "<用户画像系统>\n<当前画像>\n{profile_summary}\n</当前画像>\n<可用字段>{allowed_fields_display}</可用字段>\n\n【核心规则】\n★ 仅在用户主动提及相关话题时，才使用画像中的信息 ★\n★ 仅在用户主动提及相关话题时，才使用画像中的信息 ★\n\n<记录规则>\n1. 用户主动提及时自动记录，不刻意套话、不主动询问\n2. 更新时带上旧信息一起覆写，如：用户之前爱吃火锅，现在说也喜欢奶茶→[Profile: 爱吃=火锅、奶茶]\n3. 备注字段：每条不超过20字，用分号分隔，系统自动保留最近{max_notes_count}条\n4. 敏感/私密信息禁止记录（如身份证、密码、详细住址等）\n</记录规则>\n\n<隐私保护>\n自行判断当前对话环境：若上下文中存在除你和当前用户之外的任何其他人，则绝不主动提及用户隐私信息（除非用户明确主动询问）。\n保持自然对话，只在确实需要且用户主动提起相关话题时才使用画像信息。\n</隐私保护>\n\n<输出格式>\n回复末尾添加：[Profile: 字段=值] 或 [Profile: 昵称=小明, 性别=女]\n删除字段：[ProfileDelete: 字段名]\n</输出格式>\n</用户画像系统>",
+        "default": "<用户画像系统>\n<当前画像>\n{profile_summary}\n</当前画像>\n<可用字段>{allowed_fields_display}</可用字段>\n\n【核心规则】\n★ 仅在用户主动提及相关话题时，才使用画像中的信息 ★\n\n<记录规则>\n1. 用户主动提及时自动记录，不刻意套话、不主动询问\n2. 更新时带上旧信息一起覆写，如：用户之前爱吃火锅，现在说也喜欢奶茶→[Profile: 爱吃=火锅、奶茶]\n3. 备注字段：每条不超过20字，用分号分隔，系统自动保留最近{max_notes_count}条，显示为1.xxx 2.xxx格式\n</记录规则>\n\n<输出格式>\n记录/更新：[Profile: 字段=值] 或 [Profile: 昵称=小明, 性别=女]\n删除备注条目：[ProfileDelete: 条目编号] 如 [ProfileDelete: 1] 或 [ProfileDelete: 1, 2]\n删除整个字段：[ProfileDelete: 字段名] 如 [ProfileDelete: 昵称]\n</输出格式>\n</用户画像系统>",
         "hint": "支持变量：{profile_summary}当前画像摘要、{allowed_fields_display}可用字段列表、{max_notes_count}备注保留条数"
     },
     "debug_log_level": {

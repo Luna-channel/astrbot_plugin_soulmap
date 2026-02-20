@@ -90,7 +90,7 @@ class SoulMapManager:
         return True, f"已更新 {field}"
 
     def delete_field(self, user_id: str, field: str, session_id: Optional[str] = None) -> tuple:
-        """删除字段或备注条目（模糊匹配）"""
+        """删除字段或备注条目（支持数字索引）"""
         key = self._get_user_key(user_id, session_id)
         if key not in self.user_data:
             return False, "没有找到你的画像数据"
@@ -102,10 +102,24 @@ class SoulMapManager:
             self._save_data()
             return True, f"已删除字段 {field}"
 
-        # 2. 模糊匹配：在备注中搜索并删除包含该内容的条目
+        # 2. 数字索引：删除备注中的第N条
+        if "备注" in self.user_data[key] and field.isdigit():
+            idx = int(field) - 1  # 转为0索引
+            notes = [n.strip() for n in re.split(r'[；;]', self.user_data[key]["备注"]) if n.strip()]
+            if 0 <= idx < len(notes):
+                deleted_note = notes.pop(idx)
+                if notes:
+                    self.user_data[key]["备注"] = "；".join(notes)
+                else:
+                    del self.user_data[key]["备注"]
+                self.user_data[key]["_last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                self._save_data()
+                return True, f"已删除备注第{field}条：{deleted_note}"
+            return False, f"备注第{field}条不存在"
+
+        # 3. 模糊匹配：在备注中搜索并删除包含该内容的条目
         if "备注" in self.user_data[key]:
             notes = [n.strip() for n in re.split(r'[；;]', self.user_data[key]["备注"]) if n.strip()]
-            # 找到包含该内容的条目并删除
             new_notes = [n for n in notes if field not in n]
             if len(new_notes) < len(notes):
                 if new_notes:
@@ -135,11 +149,11 @@ class SoulMapManager:
         lines = []
         for field in self.allowed_fields:
             if field in profile and profile[field]:
-                # 备注字段按条显示
+                # 备注字段按条显示：1.xxx 2.xxx
                 if field == "备注":
                     notes = [n.strip() for n in re.split(r'[；;]', profile[field]) if n.strip()]
-                    for i, note in enumerate(notes, 1):
-                        lines.append(f"- 备注{i}：{note}")
+                    notes_display = " ".join([f"{i}.{note}" for i, note in enumerate(notes, 1)])
+                    lines.append(f"- 备注：{notes_display}")
                 else:
                     lines.append(f"- {field}：{profile[field]}")
 
@@ -297,11 +311,15 @@ class SoulMapPlugin(Star):
         # 处理删除（支持多字段：用逗号/分号/、分割）
         for match in self.delete_pattern.findall(original_text):
             # 分割多个字段名
-            fields = re.split(r'[,，;；、]', match)
-            for field in fields:
-                field = field.strip()
-                if not field:
-                    continue
+            fields = [f.strip() for f in re.split(r'[,，;；、]', match) if f.strip()]
+            
+            # 数字索引从大到小排序，避免删除后索引错位
+            # 分离数字和非数字
+            digit_fields = sorted([f for f in fields if f.isdigit()], key=int, reverse=True)
+            other_fields = [f for f in fields if not f.isdigit()]
+            
+            # 先删除非数字字段，再从大到小删除数字索引
+            for field in other_fields + digit_fields:
                 success, msg = self.manager.delete_field(user_id, field, session_id)
                 if success:
                     logger.info(f"[SoulMap] {user_id} 删除成功: {field}")
@@ -330,21 +348,21 @@ class SoulMapPlugin(Star):
 
     # ------------------- 用户命令 -------------------
 
-    @filter.command("sm画像")
+    @filter.command("我的画像")
     async def show_my_profile(self, event: AstrMessageEvent):
         user_id = event.get_sender_id()
         session_id = self._get_session_id(event)
 
         profile = self.manager.get_user_profile(user_id, session_id)
         if not profile:
-            yield event.plain_result("还没有记录你的任何信息哦~")
+            yield event.plain_result("暂时还没有记录内容，多和我聊聊吧")
             return
 
         summary = self.manager.format_profile_summary(user_id, session_id)
         last_updated = profile.get("_last_updated", "未知")
         yield event.plain_result(f"📋 你的画像：\n{summary}\n\n最后更新：{last_updated}")
 
-    @filter.command("sm删除")
+    @filter.command("删除画像")
     async def delete_my_field(self, event: AstrMessageEvent, field: str):
         user_id = event.get_sender_id()
         session_id = self._get_session_id(event)
@@ -357,7 +375,7 @@ class SoulMapPlugin(Star):
         else:
             yield event.plain_result(f"❌ {msg}")
 
-    @filter.command("sm清空")
+    @filter.command("清空画像")
     async def clear_my_profile(self, event: AstrMessageEvent):
         user_id = event.get_sender_id()
         session_id = self._get_session_id(event)
@@ -373,7 +391,7 @@ class SoulMapPlugin(Star):
     def _is_admin(self, event: AstrMessageEvent) -> bool:
         return event.role == "admin"
 
-    @filter.command("sm查询")
+    @filter.command("查询画像")
     async def admin_query_profile(self, event: AstrMessageEvent, user_id: str):
         if not self._is_admin(event):
             yield event.plain_result(self.config.get("admin_permission_denied_msg", "错误：此命令仅限管理员使用。"))
@@ -390,7 +408,7 @@ class SoulMapPlugin(Star):
         last_updated = profile.get("_last_updated", "未知")
         yield event.plain_result(f"📋 用户 {user_id} 的画像：\n{summary}\n\n最后更新：{last_updated}")
 
-    @filter.command("sm导出")
+    @filter.command("导出画像")
     async def admin_export_profiles(self, event: AstrMessageEvent):
         if not self._is_admin(event):
             yield event.plain_result(self.config.get("admin_permission_denied_msg", "错误：此命令仅限管理员使用。"))
