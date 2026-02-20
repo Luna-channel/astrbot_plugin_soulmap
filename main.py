@@ -157,7 +157,8 @@ class SoulMapPlugin(Star):
 
         # 正则模式（支持中文字段名）
         self.profile_pattern = re.compile(r"\[Profile:\s*([^\]]+)\]", re.IGNORECASE)
-        self.delete_pattern = re.compile(r"\[ProfileDelete:\s*([\w\u4e00-\u9fff]+)\]", re.IGNORECASE)
+        # 支持多字段删除: [ProfileDelete: 字段1, 字段2] 或 [ProfileDelete: 字段]
+        self.delete_pattern = re.compile(r"\[ProfileDelete:\s*([^\]]+)\]", re.IGNORECASE)
         self.block_pattern = re.compile(r"\s*\[(?:Profile|ProfileDelete):[^\]]*\]\s*", re.IGNORECASE)
 
         self._install_global_interceptors(context)
@@ -271,14 +272,19 @@ class SoulMapPlugin(Star):
                 else:
                     logger.warning(f"[SoulMap] {user_id} 更新失败: {field}={value}, 原因: {msg}")
 
-        # 处理删除
-        for field in self.delete_pattern.findall(original_text):
-            field = field.strip()
-            success, msg = self.manager.delete_field(user_id, field, session_id)
-            if success:
-                logger.info(f"[SoulMap] {user_id} 删除成功: {field}")
-            else:
-                logger.warning(f"[SoulMap] {user_id} 删除失败: {field}, 原因: {msg}")
+        # 处理删除（支持多字段：用逗号/分号/、分割）
+        for match in self.delete_pattern.findall(original_text):
+            # 分割多个字段名
+            fields = re.split(r'[,，;；、]', match)
+            for field in fields:
+                field = field.strip()
+                if not field:
+                    continue
+                success, msg = self.manager.delete_field(user_id, field, session_id)
+                if success:
+                    logger.info(f"[SoulMap] {user_id} 删除成功: {field}")
+                else:
+                    logger.warning(f"[SoulMap] {user_id} 删除失败: {field}, 原因: {msg}")
 
         # 清理标签
         resp.completion_text = self.block_pattern.sub('', original_text).strip()
@@ -302,7 +308,7 @@ class SoulMapPlugin(Star):
 
     # ------------------- 用户命令 -------------------
 
-    @filter.command("我的画像")
+    @filter.command("sm画像")
     async def show_my_profile(self, event: AstrMessageEvent):
         user_id = event.get_sender_id()
         session_id = self._get_session_id(event)
@@ -316,7 +322,7 @@ class SoulMapPlugin(Star):
         last_updated = profile.get("_last_updated", "未知")
         yield event.plain_result(f"📋 你的画像：\n{summary}\n\n最后更新：{last_updated}")
 
-    @filter.command("删除画像")
+    @filter.command("sm删除")
     async def delete_my_field(self, event: AstrMessageEvent, field: str):
         user_id = event.get_sender_id()
         session_id = self._get_session_id(event)
@@ -329,7 +335,7 @@ class SoulMapPlugin(Star):
         else:
             yield event.plain_result(f"❌ {msg}")
 
-    @filter.command("清空画像")
+    @filter.command("sm清空")
     async def clear_my_profile(self, event: AstrMessageEvent):
         user_id = event.get_sender_id()
         session_id = self._get_session_id(event)
@@ -345,7 +351,7 @@ class SoulMapPlugin(Star):
     def _is_admin(self, event: AstrMessageEvent) -> bool:
         return event.role == "admin"
 
-    @filter.command("查询画像")
+    @filter.command("sm查询")
     async def admin_query_profile(self, event: AstrMessageEvent, user_id: str):
         if not self._is_admin(event):
             yield event.plain_result(self.config.get("admin_permission_denied_msg", "错误：此命令仅限管理员使用。"))
@@ -362,7 +368,7 @@ class SoulMapPlugin(Star):
         last_updated = profile.get("_last_updated", "未知")
         yield event.plain_result(f"📋 用户 {user_id} 的画像：\n{summary}\n\n最后更新：{last_updated}")
 
-    @filter.command("导出画像")
+    @filter.command("sm导出")
     async def admin_export_profiles(self, event: AstrMessageEvent):
         if not self._is_admin(event):
             yield event.plain_result(self.config.get("admin_permission_denied_msg", "错误：此命令仅限管理员使用。"))
