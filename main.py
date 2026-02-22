@@ -348,8 +348,22 @@ class SoulMapPlugin(Star):
 
     # ------------------- 用户命令 -------------------
 
+    def _is_group_chat(self, event: AstrMessageEvent) -> bool:
+        """判断是否为群聊消息"""
+        origin = event.unified_msg_origin or ""
+        # 群聊的unified_msg_origin通常包含group关键字
+        return "group" in origin.lower()
+
     @filter.command("我的画像")
     async def show_my_profile(self, event: AstrMessageEvent):
+        # 判断是否为群聊，如果是群聊则检查开关
+        if self._is_group_chat(event):
+            allow_in_group = self.config.get("allow_profile_in_group", False)
+            if not allow_in_group:
+                denied_msg = self.config.get("group_profile_denied_msg", "为保护隐私，请私聊我查看你的画像哦~")
+                yield event.plain_result(denied_msg)
+                return
+
         user_id = event.get_sender_id()
         session_id = self._get_session_id(event)
 

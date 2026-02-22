@@ -46,6 +46,18 @@
         "default": "<用户画像系统>\n<当前画像>\n{profile_summary}\n</当前画像>\n<可用字段>{allowed_fields_display}</可用字段>\n\n【核心规则】\n★ 仅在用户主动提及相关话题时，才使用画像中的信息 ★\n\n<记录规则>\n1. 用户主动提及时自动记录，不刻意套话、不主动询问\n2. 更新时带上旧信息一起覆写，如：用户之前爱吃火锅，现在说也喜欢奶茶→[Profile: 爱吃=火锅、奶茶]\n3. 备注字段：每条不超过20字，用分号分隔，系统自动保留最近{max_notes_count}条，显示为1.xxx 2.xxx格式\n</记录规则>\n\n<输出格式>\n记录/更新：[Profile: 字段=值] 或 [Profile: 对用户的称呼=小明, 性别=女]\n删除备注条目：[ProfileDelete: 条目编号] 如 [ProfileDelete: 1] 或 [ProfileDelete: 1, 2]\n删除整个字段：[ProfileDelete: 字段名] 如 [ProfileDelete: 对用户的称呼]\n</输出格式>\n</用户画像系统>",
         "hint": "支持变量：{profile_summary}当前画像摘要、{allowed_fields_display}可用字段列表、{max_notes_count}备注保留条数"
     },
+    "allow_profile_in_group": {
+        "description": "允许在群聊中查看画像",
+        "type": "bool",
+        "default": false,
+        "hint": "关闭时（默认），用户在群聊中使用/我的画像会收到提示，需要私聊查看；开启后允许在群聊中直接查看画像。"
+    },
+    "group_profile_denied_msg": {
+        "description": "群聊画像请求拒绝提示",
+        "type": "string",
+        "default": "画像内容可能涉及隐私，请在私聊查看",
+        "hint": "当用户在群聊中请求查看画像但开关关闭时的提示语。"
+    },
     "debug_log_level": {
         "description": "日志级别",
         "type": "string",
