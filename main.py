@@ -422,29 +422,6 @@ class SoulMapPlugin(Star):
         last_updated = profile.get("_last_updated", "未知")
         yield event.plain_result(f"📋 用户 {user_id} 的画像：\n{summary}\n\n最后更新：{last_updated}")
 
-    @filter.command("导出画像")
-    async def admin_export_profiles(self, event: AstrMessageEvent):
-        if not self._is_admin(event):
-            yield event.plain_result(self.config.get("admin_permission_denied_msg", "错误：此命令仅限管理员使用。"))
-            return
-
-        all_profiles = self.manager.export_all_profiles()
-        if not all_profiles:
-            yield event.plain_result("暂无任何用户画像数据")
-            return
-
-        user_count = len(all_profiles)
-        response = f"📊 画像统计：共 {user_count} 个用户\n\n"
-
-        for i, (user_key, profile) in enumerate(all_profiles.items()):
-            if i >= 10:
-                response += f"... 还有 {user_count - 10} 个用户"
-                break
-            nickname = profile.get("nickname", "未知")
-            response += f"• {user_key}: {nickname}\n"
-
-        yield event.plain_result(response)
-
     @filter.command("画像统计")
     async def admin_profile_stats(self, event: AstrMessageEvent):
         if not self._is_admin(event):
