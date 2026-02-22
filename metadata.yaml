@@ -4,4 +4,4 @@ desc: AI驱动的用户画像收集系统，在聊天中自动提取用户信息
 help: 用户指令：我的画像、删除画像、清空画像；管理员指令：查询画像、导出画像
 version: v1.0.0
 author: 柯尔
-repo: 
+repo: https://github.com/Luna-channel/astrbot_plugin_soulmap
