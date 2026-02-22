@@ -1,6 +1,5 @@
 import json
 import re
-import logging
 from pathlib import Path
 from typing import Dict, Any, Optional
 from datetime import datetime
@@ -8,10 +7,8 @@ from datetime import datetime
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register, StarTools
 from astrbot.api.provider import LLMResponse, ProviderRequest
-from astrbot.api import AstrBotConfig
+from astrbot.api import AstrBotConfig, logger
 from astrbot.core.message.components import Plain
-
-logger = logging.getLogger("SoulMap")
 
 
 class SoulMapManager:
@@ -38,13 +35,22 @@ class SoulMapManager:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.error(f"[SoulMap] 加载数据失败: {e}")
+            return {}
+        except (IOError, OSError) as e:
+            logger.error(f"[SoulMap] 读取文件失败: {e}")
             return {}
 
     def _save_data(self):
         path = self.data_path / "user_profiles.json"
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(self.user_data, f, ensure_ascii=False, indent=2)
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(self.user_data, f, ensure_ascii=False, indent=2)
+        except (IOError, OSError) as e:
+            logger.error(f"[SoulMap] 写入文件失败: {e}")
+        except (TypeError, ValueError) as e:
+            logger.error(f"[SoulMap] 序列化数据失败: {e}")
 
     def _get_user_key(self, user_id: str, session_id: Optional[str] = None) -> str:
         return f"{session_id}_{user_id}" if session_id else user_id
@@ -181,23 +187,11 @@ class SoulMapPlugin(Star):
 
         self.manager = SoulMapManager(data_dir, allowed_fields, max_notes_count)
 
-        # 配置日志
-        log_level = self.config.get("debug_log_level", "INFO")
-        if isinstance(log_level, str):
-            log_level = getattr(logging, log_level.upper(), logging.INFO)
-        logger.setLevel(log_level)
-        if not logger.handlers:
-            handler = logging.StreamHandler()
-            handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-            logger.addHandler(handler)
-
         # 正则模式（支持中文字段名）
         self.profile_pattern = re.compile(r"\[Profile:\s*([^\]]+)\]", re.IGNORECASE)
         # 支持多字段删除: [ProfileDelete: 字段1, 字段2] 或 [ProfileDelete: 字段]
         self.delete_pattern = re.compile(r"\[ProfileDelete:\s*([^\]]+)\]", re.IGNORECASE)
         self.block_pattern = re.compile(r"\s*\[(?:Profile|ProfileDelete):[^\]]*\]\s*", re.IGNORECASE)
-
-        self._install_global_interceptors(context)
 
     @property
     def session_based(self) -> bool:
@@ -205,47 +199,6 @@ class SoulMapPlugin(Star):
 
     def _get_session_id(self, event: AstrMessageEvent) -> Optional[str]:
         return event.unified_msg_origin if self.session_based else None
-
-    def _install_global_interceptors(self, context: Context):
-        """安装全局拦截器"""
-        plugin_self = self
-
-        original_send_message = context.send_message
-
-        async def patched_send_message(session, message_chain):
-            try:
-                if message_chain and hasattr(message_chain, 'chain') and message_chain.chain:
-                    for comp in message_chain.chain:
-                        if isinstance(comp, Plain) and comp.text:
-                            original_text = comp.text
-                            cleaned_text = plugin_self.block_pattern.sub('', original_text).strip()
-                            if cleaned_text != original_text:
-                                comp.text = cleaned_text
-            except Exception as e:
-                logger.warning(f"[SoulMap] send_message 拦截器异常: {e}")
-            return await original_send_message(session, message_chain)
-
-        context.send_message = patched_send_message
-        logger.info("[SoulMap] 已安装全局拦截器")
-
-        # 注意：不在 patched_text_chat 中清理标签！
-        # 因为 patched_text_chat 在 on_llm_response 钩子之前执行
-        # 如果在这里清理，钩子就解析不到 [Profile:] 内容了
-        # 清理工作统一由 on_llm_response 和 on_decorating_result 完成
-        def wrap_provider_text_chat(provider):
-            if hasattr(provider, '_soulmap_wrapped'):
-                return
-            provider._soulmap_wrapped = True
-
-        try:
-            for provider in context.get_all_providers():
-                wrap_provider_text_chat(provider)
-            logger.info(f"[SoulMap] 已为 {len(context.get_all_providers())} 个 Provider 安装拦截器")
-        except Exception as e:
-            logger.warning(f"[SoulMap] 安装 Provider 拦截器出错: {e}")
-
-        self._wrap_provider_text_chat = wrap_provider_text_chat
-        self._original_send_message = original_send_message
 
     def _get_allowed_fields_display(self) -> str:
         """生成可用字段的显示字符串"""
@@ -297,7 +250,9 @@ class SoulMapPlugin(Star):
         
         for match in profile_matches:
             logger.debug(f"[SoulMap] 解析 Profile 块: {match[:100]}...")
-            pairs = re.findall(r'([\w\u4e00-\u9fff]+)\s*=\s*([^,\]]+)', match)
+            # 改进正则：支持中英文逗号分隔，value取到下一个"字段="或结尾
+            # 匹配模式：字段名=值，值可以包含中文逗号顿号等，直到遇到", 字段="或",字段="或结尾
+            pairs = re.findall(r'([\w\u4e00-\u9fff/]+)\s*=\s*([^,，]*(?:[,，](?!\s*[\w\u4e00-\u9fff/]+=)[^,，]*)*)', match)
             logger.debug(f"[SoulMap] 解析到的字段对: {pairs}")
             for field, value in pairs:
                 field = field.strip()
@@ -448,16 +403,3 @@ class SoulMapPlugin(Star):
 
     async def terminate(self):
         self.manager._save_data()
-
-        if hasattr(self, '_original_send_message') and self._original_send_message:
-            try:
-                self.context.send_message = self._original_send_message
-            except Exception as e:
-                logger.warning(f"[SoulMap] 恢复 send_message 失败: {e}")
-
-        try:
-            for provider in self.context.get_all_providers():
-                if hasattr(provider, '_soulmap_wrapped'):
-                    delattr(provider, '_soulmap_wrapped')
-        except Exception as e:
-            logger.warning(f"[SoulMap] 清理 Provider 标记失败: {e}")
