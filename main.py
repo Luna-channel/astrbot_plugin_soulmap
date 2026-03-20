@@ -60,8 +60,8 @@ class SoulMapManager:
         return self.user_data.get(key, {}).copy()
 
     def update_field(self, user_id: str, field: str, value: str, 
-                     session_id: Optional[str] = None) -> tuple:
-        """更新字段值，备注字段特殊处理"""
+                     session_id: Optional[str] = None, save: bool = True) -> tuple:
+        """更新字段值，备注字段特殊处理。save=False 时跳过写盘（用于批量操作）"""
         if field not in self.allowed_fields:
             return False, f"字段 '{field}' 不在允许列表中"
 
@@ -92,11 +92,12 @@ class SoulMapManager:
         self.user_data[key][field] = value
         self.user_data[key]["_last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        self._save_data()
+        if save:
+            self._save_data()
         return True, f"已更新 {field}"
 
-    def delete_field(self, user_id: str, field: str, session_id: Optional[str] = None) -> tuple:
-        """删除字段或备注条目（支持数字索引）"""
+    def delete_field(self, user_id: str, field: str, session_id: Optional[str] = None, save: bool = True) -> tuple:
+        """删除字段或备注条目（支持数字索引）。save=False 时跳过写盘（用于批量操作）"""
         key = self._get_user_key(user_id, session_id)
         if key not in self.user_data:
             return False, "没有找到你的画像数据"
@@ -105,7 +106,8 @@ class SoulMapManager:
         if field in self.user_data[key]:
             del self.user_data[key][field]
             self.user_data[key]["_last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            self._save_data()
+            if save:
+                self._save_data()
             return True, f"已删除字段 {field}"
 
         # 2. 数字索引：删除备注中的第N条
@@ -119,7 +121,8 @@ class SoulMapManager:
                 else:
                     del self.user_data[key]["备注"]
                 self.user_data[key]["_last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                self._save_data()
+                if save:
+                    self._save_data()
                 return True, f"已删除备注第{field}条：{deleted_note}"
             return False, f"备注第{field}条不存在"
 
@@ -133,7 +136,8 @@ class SoulMapManager:
                 else:
                     del self.user_data[key]["备注"]
                 self.user_data[key]["_last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                self._save_data()
+                if save:
+                    self._save_data()
                 return True, f"已从备注中删除包含 '{field}' 的条目"
 
         return False, f"未找到字段或备注条目 '{field}'"
@@ -232,7 +236,7 @@ class SoulMapPlugin(Star):
 
     @filter.on_llm_response()
     async def on_llm_resp(self, event: AstrMessageEvent, resp: LLMResponse):
-        """解析并更新画像"""
+        """解析并更新画像（合并同一回复中的重复操作，统一写盘一次）"""
         user_id = event.get_sender_id()
         session_id = self._get_session_id(event)
         original_text = resp.completion_text or ""
@@ -244,42 +248,79 @@ class SoulMapPlugin(Star):
             logger.debug("[SoulMap] 原始文本为空，直接返回")
             return
 
-        # 处理更新
-        profile_matches = self.profile_pattern.findall(original_text)
-        logger.debug(f"[SoulMap] 匹配到的 Profile 块数量: {len(profile_matches)}")
-        
-        for match in profile_matches:
-            logger.debug(f"[SoulMap] 解析 Profile 块: {match[:100]}...")
-            # 改进正则：支持中英文逗号分隔，value取到下一个"字段="或结尾
-            # 匹配模式：字段名=值，值可以包含中文逗号顿号等，直到遇到", 字段="或",字段="或结尾
-            pairs = re.findall(r'([\w\u4e00-\u9fff/]+)\s*=\s*([^,，]*(?:[,，](?!\s*[\w\u4e00-\u9fff/]+=)[^,，]*)*)', match)
-            logger.debug(f"[SoulMap] 解析到的字段对: {pairs}")
-            for field, value in pairs:
-                field = field.strip()
-                value = value.strip()
-                success, msg = self.manager.update_field(user_id, field, value, session_id)
-                if success:
-                    logger.info(f"[SoulMap] {user_id} 更新成功: {field}={value}")
-                else:
-                    logger.warning(f"[SoulMap] {user_id} 更新失败: {field}={value}, 原因: {msg}")
+        # ---- 第一步：收集所有操作，按出现顺序记录 ----
+        # 用 (操作类型, 位置) 排序来保证按原文顺序执行
+        ops = []  # [(pos, 'update'|'delete', field, value|None), ...]
 
-        # 处理删除（支持多字段：用逗号/分号/、分割）
-        for match in self.delete_pattern.findall(original_text):
-            # 分割多个字段名
-            fields = [f.strip() for f in re.split(r'[,，;；、]', match) if f.strip()]
-            
-            # 数字索引从大到小排序，避免删除后索引错位
-            # 分离数字和非数字
-            digit_fields = sorted([f for f in fields if f.isdigit()], key=int, reverse=True)
-            other_fields = [f for f in fields if not f.isdigit()]
-            
-            # 先删除非数字字段，再从大到小删除数字索引
-            for field in other_fields + digit_fields:
-                success, msg = self.manager.delete_field(user_id, field, session_id)
-                if success:
-                    logger.info(f"[SoulMap] {user_id} 删除成功: {field}")
-                else:
-                    logger.warning(f"[SoulMap] {user_id} 删除失败: {field}, 原因: {msg}")
+        for m in self.profile_pattern.finditer(original_text):
+            match_text = m.group(1)
+            pos = m.start()
+            pairs = re.findall(
+                r'([\w\u4e00-\u9fff/]+)\s*=\s*([^,，]*(?:[,，](?!\s*[\w\u4e00-\u9fff/]+=)[^,，]*)*)',
+                match_text
+            )
+            for field, value in pairs:
+                ops.append((pos, 'update', field.strip(), value.strip()))
+
+        for m in self.delete_pattern.finditer(original_text):
+            match_text = m.group(1)
+            pos = m.start()
+            fields = [f.strip() for f in re.split(r'[,，;；、]', match_text) if f.strip()]
+            for field in fields:
+                ops.append((pos, 'delete', field, None))
+
+        # 按出现位置排序
+        ops.sort(key=lambda x: x[0])
+
+        # ---- 第二步：同一字段去重，只保留最后一次操作 ----
+        # 对于备注字段：如果最后一个操作是 update 且包含完整内容，前面的中间步骤可以跳过
+        final_ops = {}  # field -> (op_type, value)
+        for _, op_type, field, value in ops:
+            final_ops[field] = (op_type, value)
+
+        if not final_ops:
+            # 没有任何画像操作，只清理标签就返回
+            resp.completion_text = self.block_pattern.sub('', original_text).strip()
+            if resp.result_chain and resp.result_chain.chain:
+                for comp in resp.result_chain.chain:
+                    if isinstance(comp, Plain) and comp.text:
+                        comp.text = self.block_pattern.sub('', comp.text).strip()
+            return
+
+        logger.debug(f"[SoulMap] 原始操作数: {len(ops)}, 去重后: {len(final_ops)}")
+
+        # ---- 第三步：按正确顺序执行（先删后写），不逐次写盘 ----
+        has_changes = False
+
+        # 先执行所有删除
+        delete_fields = [(f, v) for f, (op, v) in final_ops.items() if op == 'delete']
+        # 数字索引从大到小，避免删除后索引错位
+        digit_deletes = sorted([f for f, _ in delete_fields if f.isdigit()], key=int, reverse=True)
+        other_deletes = [f for f, _ in delete_fields if not f.isdigit()]
+
+        for field in other_deletes + digit_deletes:
+            success, msg = self.manager.delete_field(user_id, field, session_id, save=False)
+            if success:
+                has_changes = True
+                logger.info(f"[SoulMap] {user_id} 删除成功: {field}")
+            else:
+                logger.warning(f"[SoulMap] {user_id} 删除失败: {field}, 原因: {msg}")
+
+        # 再执行所有更新
+        for field, (op_type, value) in final_ops.items():
+            if op_type != 'update':
+                continue
+            success, msg = self.manager.update_field(user_id, field, value, session_id, save=False)
+            if success:
+                has_changes = True
+                logger.info(f"[SoulMap] {user_id} 更新成功: {field}={value}")
+            else:
+                logger.warning(f"[SoulMap] {user_id} 更新失败: {field}={value}, 原因: {msg}")
+
+        # ---- 第四步：统一写盘一次 ----
+        if has_changes:
+            self.manager._save_data()
+            logger.debug(f"[SoulMap] {user_id} 批量操作完成，统一写盘")
 
         # 清理标签
         resp.completion_text = self.block_pattern.sub('', original_text).strip()
