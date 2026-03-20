@@ -173,7 +173,7 @@ class SoulMapManager:
         return self.user_data.copy()
 
 
-@register("SoulMap", "柯尔", "AI驱动的用户画像收集系统，简洁设计，AI负责数据管理", "1.1.0")
+@register("SoulMap", "柯尔", "AI驱动的用户画像收集系统，简洁设计，AI负责数据管理", "1.1.1")
 class SoulMapPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
